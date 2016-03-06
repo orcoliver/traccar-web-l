@@ -65,6 +65,7 @@ public class GuiceServletConfig extends GuiceServletContextListener {
 
                 filter("/traccar/*").through(PersistFilter.class);
                 filter("/", "/traccar.html", "/m/", "/m/index.html").through(LocaleFilter.class);
+		filter("/", "/traccar.html", "/m/", "/m/index.html","/traccar/*").through(CorsFilter.class);
 
                 serve("/traccar/dataService").with(DataServiceImpl.class);
                 serve("/traccar/uiStateService").with(UIStateServiceImpl.class);
