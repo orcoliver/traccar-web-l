@@ -45,9 +45,10 @@ public class CorsFilter implements Filter {
     public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain) throws IOException, ServletException {
 	((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Origin","*");
 	((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Methods","GET,POST");
-	//((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
-	((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Headers","Content-Type, *");
-	/*((HttpServletResponse) servletResponse).setHeader("Access-Control-Expose-Headers","Set-Cookie");*/
+	//((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Headers","Content-Type, *");
+	((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
+	((HttpServletResponse) servletResponse).setHeader("Access-Control-Allow-Credentials","True");
+	//((HttpServletResponse) servletResponse).setHeader("Access-Control-Expose-Headers","Set-Cookie");
 	filterChain.doFilter(servletRequest, servletResponse);
     }
 
