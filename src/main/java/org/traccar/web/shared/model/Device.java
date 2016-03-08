@@ -243,8 +243,7 @@ public class Device implements IsSerializable {
         this.photo = photo;
     }
 
-    @JsonIgnore
-    private String phoneNumber;
+    public String phoneNumber;
 
     public String getPhoneNumber() {
         return phoneNumber;
