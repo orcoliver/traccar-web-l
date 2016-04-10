@@ -68,6 +68,7 @@ public class UserSettingsDialog implements Editor<UserSettings> {
                                           NumberField<Integer> zoomLevel,
                                           CheckBox maximizeOverviewMap,
                                           GridSelectionModel<UserSettings.OverlayType> overlays);
+        void onSetZoomLevelToCurrent(NumberField<Short> followedDeviceZoomLevel);
     }
 
     private UserSettingsHandler userSettingsHandler;
@@ -87,6 +88,9 @@ public class UserSettingsDialog implements Editor<UserSettings> {
 
     @UiField
     NumberField<Short> traceInterval;
+
+    @UiField
+    NumberField<Short> followedDeviceZoomLevel;
 
     @UiField(provided = true)
     NumberPropertyEditor<Short> shortPropertyEditor = new NumberPropertyEditor.ShortPropertyEditor();
@@ -186,6 +190,9 @@ public class UserSettingsDialog implements Editor<UserSettings> {
         traceInterval.addValidator(new MinNumberValidator<>((short) 1));
         traceInterval.addValidator(new MaxNumberValidator<>((short) (60 * 48)));
 
+        followedDeviceZoomLevel.addValidator(new MinNumberValidator<>((short) 1));
+        followedDeviceZoomLevel.addValidator(new MaxNumberValidator<>((short) 16));
+
         driver.initialize(this);
         driver.edit(userSettings);
         timeZone.setValue(TimeZoneComboBox.getByID(userSettings.getTimeZoneId()));
@@ -220,5 +227,10 @@ public class UserSettingsDialog implements Editor<UserSettings> {
     @UiHandler("takeFromMapButton")
     public void onSaveDefaultMapSateClicked(SelectEvent event) {
         userSettingsHandler.onTakeCurrentMapState(mapType, centerLongitude, centerLatitude, zoomLevel, maximizeOverviewMap, grid.getSelectionModel());
+    }
+
+    @UiHandler("setZoomLevelToCurrentButton")
+    public void onSetZoomLevelToCurrentClicked(SelectEvent event) {
+        userSettingsHandler.onSetZoomLevelToCurrent(followedDeviceZoomLevel);
     }
 }

@@ -403,6 +403,12 @@ public interface Messages extends com.google.gwt.i18n.client.Messages {
 
     String traceInterval();
 
+    String followedDeviceZoomLevel();
+
+    String followedDeviceZoomLevelToolTip();
+
+    String useCurrentZoomLevel();
+
     String errAccessDenied();
 
     String errMaxNumOfDevicesExceeded(int maxNumOfDevices);
