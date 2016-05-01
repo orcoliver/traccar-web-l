@@ -15,10 +15,7 @@
  */
 package org.traccar.web.client.controller;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import com.sencha.gxt.data.shared.event.StoreHandlers;
 import com.sencha.gxt.widget.core.client.Window;
@@ -27,6 +24,7 @@ import org.traccar.web.client.Application;
 import org.traccar.web.client.ApplicationContext;
 import org.traccar.web.client.i18n.Messages;
 import org.traccar.web.client.model.BaseAsyncCallback;
+import org.traccar.web.client.model.GroupStore;
 import org.traccar.web.client.state.DeviceVisibilityHandler;
 import org.traccar.web.client.view.DeviceDialog;
 import org.traccar.web.client.view.UserShareDialog;
@@ -42,7 +40,7 @@ import com.sencha.gxt.widget.core.client.box.AlertMessageBox;
 import com.sencha.gxt.widget.core.client.box.ConfirmMessageBox;
 import com.sencha.gxt.widget.core.client.event.DialogHideEvent;
 
-public class DeviceController implements ContentController, DeviceView.DeviceHandler {
+public class DeviceController implements ContentController, DeviceView.DeviceHandler, GroupsController.GroupRemoveHandler {
     private final MapController mapController;
 
     private final Application application;
@@ -60,7 +58,7 @@ public class DeviceController implements ContentController, DeviceView.DeviceHan
     // geo-fences per device
     private final Map<Long, Set<GeoFence>> deviceGeoFences;
 
-    private final ListStore<Group> groupStore;
+    private final GroupStore groupStore;
 
     private final DeviceVisibilityHandler deviceVisibilityHandler;
 
@@ -74,7 +72,7 @@ public class DeviceController implements ContentController, DeviceView.DeviceHan
                             StoreHandlers<Device> deviceStoreHandler,
                             ListStore<GeoFence> geoFenceStore,
                             Map<Long, Set<GeoFence>> deviceGeoFences,
-                            ListStore<Group> groupStore,
+                            GroupStore groupStore,
                             Application application) {
         this.application = application;
         this.mapController = mapController;
@@ -104,7 +102,6 @@ public class DeviceController implements ContentController, DeviceView.DeviceHan
             public void onSuccess(List<Device> result) {
                 deviceStore.addAll(result);
                 deviceStore.addStoreHandlers(deviceStoreHandler);
-                deviceView.groupDevices();
             }
         });
     }
@@ -304,5 +301,17 @@ public class DeviceController implements ContentController, DeviceView.DeviceHan
             }
         }
         selectedDevice = null;
+    }
+
+    @Override
+    public void groupRemoved(Group group) {
+        for (int i = 0; i < deviceStore.size(); i++) {
+            Device device = deviceStore.get(i);
+            if (Objects.equals(device.getGroup(), group)) {
+                device.setGroup(null);
+                deviceStore.update(device);
+                deviceVisibilityHandler.updated(device);
+            }
+        }
     }
 }

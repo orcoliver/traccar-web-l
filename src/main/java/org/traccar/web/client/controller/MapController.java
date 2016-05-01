@@ -153,6 +153,7 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
                         if (position.getSpeed() > device.getIdleSpeedThreshold()) {
                             latestNonIdlePositionMap.put(device.getId(), position);
                             deviceVisibilityHandler.moving(device);
+                            position.setIdleStatus(Position.IdleStatus.MOVING);
                         } else {
                             Position latestNonIdlePosition = latestNonIdlePositionMap.get(device.getId());
                             long minIdleTime = (long) device.getMinIdleTime() * 1000;
@@ -160,6 +161,9 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
                                     && position.getTime().getTime() - latestNonIdlePosition.getTime().getTime() > minIdleTime) {
                                 position.setIdleSince(latestNonIdlePosition.getTime());
                                 deviceVisibilityHandler.idle(device);
+                                position.setIdleStatus(Position.IdleStatus.IDLE);
+                            } else {
+                                position.setIdleStatus(Position.IdleStatus.PAUSED);
                             }
                         }
                     }
@@ -280,6 +284,7 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
 
         if (track.getStyle().getIconType() == null) {
             mapView.setArchiveSnapToTrack(positions);
+            mapView.showPauseAndStops(positions);
         } else {
             mapView.showArchivePositions(positions);
         }

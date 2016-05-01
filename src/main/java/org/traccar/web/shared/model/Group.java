@@ -25,12 +25,20 @@ import java.util.Set;
 @Entity
 @Table(name = "groups",
        indexes = { @Index(name = "groups_pkey", columnList = "id") })
-public class Group implements IsSerializable {
+public class Group implements IsSerializable, GroupedDevice {
     public Group() {
     }
 
     public Group(long id, String name) {
+        this(id);
+        this.name = name;
+    }
+
+    public Group(long id) {
         this.id = id;
+    }
+
+    public Group(String name) {
         this.name = name;
     }
 
@@ -80,6 +88,20 @@ public class Group implements IsSerializable {
         this.users = users;
     }
 
+    @ManyToOne
+    @JoinColumn(foreignKey = @ForeignKey(name = "groups_fkey_parent_id"))
+    @JsonIgnore
+    @GwtTransient
+    private Group parent;
+
+    public Group getParent() {
+        return parent;
+    }
+
+    public void setParent(Group parent) {
+        this.parent = parent;
+    }
+
     @Override
     public int hashCode() {
         int result = (int) (getId() ^ (getId() >>> 32));
@@ -96,6 +118,7 @@ public class Group implements IsSerializable {
 
         if (getId() != that.getId()) return false;
         if (getName() != null ? !getName().equals(that.getName()) : that.getName() != null) return false;
+        if (getParent() != null ? !getParent().equals(that.getParent()) : that.getParent() != null) return false;
 
         return true;
     }

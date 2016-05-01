@@ -16,8 +16,8 @@
 package org.traccar.web.client.controller;
 
 import com.google.gwt.core.client.GWT;
-import com.sencha.gxt.data.shared.ListStore;
 import com.sencha.gxt.data.shared.Store;
+import com.sencha.gxt.data.shared.TreeStore;
 import com.sencha.gxt.widget.core.client.ContentPanel;
 import com.sencha.gxt.widget.core.client.Window;
 import org.traccar.web.client.i18n.Messages;
@@ -28,16 +28,28 @@ import org.traccar.web.client.view.UserShareDialog;
 import org.traccar.web.shared.model.Group;
 import org.traccar.web.shared.model.User;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class GroupsController implements NavView.GroupsHandler, ContentController {
     private final Messages i18n = GWT.create(Messages.class);
-    private final ListStore<Group> groupStore;
+    private final GroupStore groupStore;
+    private final GroupRemoveHandler removeHandler;
 
-    public GroupsController() {
-        GroupProperties groupProperties = GWT.create(GroupProperties.class);
-        this.groupStore = new ListStore<>(groupProperties.id());
+    public interface GroupAddHandler {
+        void groupAdded(Group group);
+    }
+
+    public interface GroupRemoveHandler {
+        void groupRemoved(Group group);
+    }
+
+    public interface ChangesSaveHandler {
+        void changesSaved();
+    }
+
+    public GroupsController(GroupStore groupStore, GroupRemoveHandler removeHandler) {
+        this.removeHandler = removeHandler;
+        this.groupStore = groupStore;
     }
 
     @Override
@@ -48,10 +60,36 @@ public class GroupsController implements NavView.GroupsHandler, ContentControlle
     @Override
     public void run() {
         final GroupServiceAsync service = GWT.create(GroupService.class);
-        service.getGroups(new BaseAsyncCallback<List<Group>>(i18n) {
+        service.getGroups(new BaseAsyncCallback<Map<Group, Group>>(i18n) {
             @Override
-            public void onSuccess(List<Group> result) {
-                groupStore.addAll(result);
+            public void onSuccess(Map<Group, Group> result) {
+                // put root groups into the first level records to add
+                List<Group> toAdd = new ArrayList<>();
+                for (Map.Entry<Group, Group> entry : result.entrySet()) {
+                    if (entry.getValue() == null) {
+                        toAdd.add(entry.getKey());
+                    }
+                }
+
+                // fill tree store level by level
+                while (!toAdd.isEmpty()) {
+                    List<Group> newToAdd = new ArrayList<>();
+                    for (Group group : toAdd) {
+                        Group parent = result.get(group);
+                        if (parent == null) {
+                            groupStore.add(group);
+                        } else {
+                            groupStore.add(parent, group);
+                        }
+                        // prepare next level groups as children of currently processed group
+                        for (Map.Entry<Group, Group> entry : result.entrySet()) {
+                            if (Objects.equals(entry.getValue(), group)) {
+                                newToAdd.add(entry.getKey());
+                            }
+                        }
+                    }
+                    toAdd = newToAdd;
+                }
             }
         });
     }
@@ -59,46 +97,102 @@ public class GroupsController implements NavView.GroupsHandler, ContentControlle
     @Override
     public void onShowGroups() {
         final GroupServiceAsync service = GWT.create(GroupService.class);
+        final Map<Group, List<Group>> originalParents = getParents();
+
         GroupsDialog.GroupsHandler handler = new GroupsDialog.GroupsHandler() {
             @Override
-            public void onSave() {
+            public void onAdd(Group parent, Group group, final GroupAddHandler groupsHandler) {
+                service.addGroup(parent, group, new BaseAsyncCallback<Group>(i18n) {
+                    @Override
+                    public void onSuccess(Group result) {
+                        groupsHandler.groupAdded(result);
+                    }
+                });
+            }
+
+            @Override
+            public void onSave(final ChangesSaveHandler groupsHandler) {
+                final Set<Group> setToSave = new HashSet<>();
                 for (Store<Group>.Record record : groupStore.getModifiedRecords()) {
-                    final Group originalGroup = record.getModel();
-                    Group group = new Group(originalGroup.getId(), null).copyFrom(originalGroup);
+                    Group originalGroup = record.getModel();
+                    Group group = new Group(originalGroup.getId()).copyFrom(originalGroup);
                     for (Store.Change<Group, ?> change : record.getChanges()) {
                         change.modify(group);
                     }
-                    if (group.getId() < 0) {
-                        service.addGroup(group, new BaseAsyncCallback<Group>(i18n) {
-                            @Override
-                            public void onSuccess(Group result) {
-                                groupStore.remove(originalGroup);
-                                groupStore.add(result);
-                            }
-                        });
-                    } else {
-                        service.updateGroup(group, new BaseAsyncCallback<Group>(i18n) {
-                            @Override
-                            public void onSuccess(Group result) {
-                                groupStore.update(result);
-                            }
-                        });
+                    setToSave.add(group);
+                }
+
+                for (Group group : groupStore.getAll()) {
+                    Group originalParent = getOriginalParent(group);
+                    Group newParent = groupStore.getParent(group);
+                    if (!Objects.equals(originalParent, newParent)) {
+                        setToSave.add(group);
                     }
                 }
+
+                Map<Group, List<Group>> groupsWithParents = new HashMap<>();
+                for (Group group : setToSave) {
+                    Group parent = groupStore.getParent(group);
+                    List<Group> subGroups = groupsWithParents.get(parent);
+                    if (subGroups == null) {
+                        subGroups = new ArrayList<>();
+                        groupsWithParents.put(parent, subGroups);
+                    }
+                    subGroups.add(group);
+                }
+
+                service.updateGroups(groupsWithParents, new BaseAsyncCallback<Void>(i18n) {
+                    @Override
+                    public void onSuccess(Void result) {
+                        syncOriginalParents();
+                        groupsHandler.changesSaved();
+                        groupStore.commitChanges();
+                    }
+                });
             }
 
             @Override
             public void onRemove(final Group group) {
-                if (group.getId() >= 0) {
-                    service.removeGroup(group, new BaseAsyncCallback<Void>(i18n) {
-                        @Override
-                        public void onSuccess(Void result) {
+                List<Group> toRemove = new ArrayList<>();
+                toRemove.add(group);
+                toRemove.addAll(groupStore.getAllChildren(group));
+                service.removeGroups(toRemove, new BaseAsyncCallback<Void>(i18n) {
+                    @Override
+                    public void onSuccess(Void result) {
+                        groupStore.remove(group);
+                        syncOriginalParents();
+                        removeHandler.groupRemoved(group);
+                    }
+                });
+            }
+
+            @Override
+            public void onCancelSaving(final List<Group> newGroups) {
+                // Move updated nodes to the original parents
+                for (Map.Entry<Group, List<Group>> entry : originalParents.entrySet()) {
+                    Group originalParent = entry.getKey();
+                    List<Group> subGroups = entry.getValue();
+                    for (Group group : subGroups) {
+                        if (!Objects.equals(groupStore.getParent(group), originalParent)) {
+                            TreeStore.TreeNode<Group> subTree = groupStore.getSubTree(group);
+                            groupStore.remove(group);
+                            if (originalParent == null) {
+                                groupStore.addSubTree(subGroups.indexOf(group), Collections.singletonList(subTree));
+                            } else {
+                                groupStore.addSubTree(originalParent, subGroups.indexOf(group), Collections.singletonList(subTree));
+                            }
+                        }
+                    }
+                }
+                service.removeGroups(newGroups, new BaseAsyncCallback<Void>(i18n) {
+                    @Override
+                    public void onSuccess(Void result) {
+                        for (Group group : newGroups) {
                             groupStore.remove(group);
                         }
-                    });
-                } else {
-                    groupStore.remove(group);
-                }
+                        groupStore.rejectChanges();
+                    }
+                });
             }
 
             @Override
@@ -119,14 +213,40 @@ public class GroupsController implements NavView.GroupsHandler, ContentControlle
                         }).show();
                     }
                 });
+            }
 
+            private void syncOriginalParents() {
+                originalParents.clear();
+                originalParents.putAll(getParents());
+            }
+
+            private Group getOriginalParent(Group group) {
+                for (Map.Entry<Group, List<Group>> entry : originalParents.entrySet()) {
+                    Group originalParent = entry.getKey();
+                    if (entry.getValue().contains(group)) {
+                        return originalParent;
+                    }
+                }
+                return null;
             }
         };
 
         new GroupsDialog(groupStore, handler).show();
     }
 
-    public ListStore<Group> getGroupStore() {
-        return groupStore;
+    private Map<Group, List<Group>> getParents() {
+        Map<Group, List<Group>> result = new HashMap<>();
+
+        for (Group group : groupStore.getAll()) {
+            Group parent = groupStore.getParent(group);
+            List<Group> subGroups = result.get(parent);
+            if (subGroups == null) {
+                subGroups = new ArrayList<>();
+                result.put(parent, subGroups);
+            }
+            subGroups.add(group);
+        }
+
+        return result;
     }
 }

@@ -20,6 +20,7 @@ import com.google.gwt.user.client.rpc.GwtTransient;
 import com.google.gwt.user.client.rpc.IsSerializable;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Set;
 
@@ -29,7 +30,7 @@ import javax.persistence.*;
 @Table(name = "devices",
        indexes = { @Index(name = "devices_pkey", columnList = "id") },
        uniqueConstraints = { @UniqueConstraint(name = "devices_ukey_uniqueid", columnNames = "uniqueid") })
-public class Device implements IsSerializable {
+public class Device implements IsSerializable, GroupedDevice {
 
     private static final long serialVersionUID = 1;
     public static final short DEFAULT_TIMEOUT = 5 * 60;
@@ -68,7 +69,7 @@ public class Device implements IsSerializable {
                 sensors.add(new Sensor(sensor));
             }
         }
-        group = device.group == null ? null : new Group(device.group.getId(), null).copyFrom(device.group);
+        group = device.group == null ? null : new Group(device.group.getId()).copyFrom(device.group);
     }
 
     @Id
@@ -194,7 +195,7 @@ public class Device implements IsSerializable {
     }
 
     @GwtTransient
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(foreignKey = @ForeignKey(name = "devices_fkey_owner_id"))
     @JsonIgnore
     private User owner;
@@ -333,6 +334,29 @@ public class Device implements IsSerializable {
 
     public void setGroup(Group group) {
         this.group = group;
+    }
+
+    @Column(nullable = true, length = 128)
+    private String status;
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    @Column(name = "lastupdate", nullable = true)
+    @Temporal(TemporalType.TIMESTAMP)
+    private Date lastUpdate;
+
+    public Date getLastUpdate() {
+        return lastUpdate;
+    }
+
+    public void setLastUpdate(Date lastUpdate) {
+        this.lastUpdate = lastUpdate;
     }
 
     @Override

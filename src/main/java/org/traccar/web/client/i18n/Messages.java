@@ -520,4 +520,10 @@ public interface Messages extends com.google.gwt.i18n.client.Messages {
     String noGroup();
 
     String online();
+
+    String message();
+
+    String notificationExpiryPeriod();
+
+    String loadingData();
 }

@@ -43,7 +43,7 @@ public class GroupServiceImpl extends RemoteServiceServlet implements GroupServi
     @Transactional
     @RequireUser
     @Override
-    public List<Group> getGroups() {
+    public Map<Group, Group> getGroups() {
         List<Group> groups;
 
         if (sessionUser.get().getAdmin()) {
@@ -52,18 +52,23 @@ public class GroupServiceImpl extends RemoteServiceServlet implements GroupServi
             groups = new ArrayList<>(sessionUser.get().getAllAvailableGroups());
         }
 
-        return new ArrayList<>(groups);
+        Map<Group, Group> result = new HashMap<>();
+        for (Group group : groups) {
+            result.put(group, group.getParent());
+        }
+        return result;
     }
 
     @Transactional
     @RequireUser
     @RequireWrite
     @Override
-    public Group addGroup(Group group) {
+    public Group addGroup(Group parent, Group group) {
         Group toSave = new Group().copyFrom(group);
 
         toSave.setUsers(new HashSet<User>(1));
         toSave.getUsers().add(sessionUser.get());
+        toSave.setParent(parent == null ? null : entityManager.get().find(Group.class, parent.getId()));
         entityManager.get().persist(toSave);
 
         return toSave;
@@ -73,36 +78,42 @@ public class GroupServiceImpl extends RemoteServiceServlet implements GroupServi
     @RequireUser
     @RequireWrite
     @Override
-    public Group updateGroup(Group group) throws AccessDeniedException {
+    public void updateGroups(Map<Group, List<Group>> groups) throws AccessDeniedException {
         User user = sessionUser.get();
-        Group toSave = entityManager.get().find(Group.class, group.getId());
-        if (!user.hasAccessTo(toSave)) {
-            throw new AccessDeniedException();
+        for (Map.Entry<Group, List<Group>> entry : groups.entrySet()) {
+            Group parent = entry.getKey();
+            for (Group group : entry.getValue()) {
+                Group toSave = entityManager.get().find(Group.class, group.getId());
+                if (!user.hasAccessTo(toSave)) {
+                    throw new AccessDeniedException();
+                }
+                toSave.copyFrom(group);
+                toSave.setParent(parent == null ? null : entityManager.get().find(Group.class, parent.getId()));
+            }
         }
-
-        toSave.copyFrom(group);
-
-        return toSave;
     }
 
     @Transactional
     @RequireUser
     @RequireWrite
     @Override
-    public void removeGroup(Group group) throws AccessDeniedException {
+    public void removeGroups(List<Group> groups) throws AccessDeniedException {
         User user = sessionUser.get();
-        Group toRemove = entityManager.get().find(Group.class, group.getId());
-        if (!user.hasAccessTo(toRemove)) {
-            throw new AccessDeniedException();
-        }
 
-        if (user.getAdmin() || user.getManager()) {
-            toRemove.getUsers().removeAll(dataService.getUsers());
-        }
-        toRemove.getUsers().remove(user);
-        if (toRemove.getUsers().isEmpty()) {
-            entityManager.get().createQuery("UPDATE Device d SET d.group=null WHERE d.group=:group").setParameter("group", toRemove).executeUpdate();
-            entityManager.get().remove(toRemove);
+        for (Group group : groups) {
+            Group toRemove = entityManager.get().find(Group.class, group.getId());
+            if (!user.hasAccessTo(toRemove)) {
+                throw new AccessDeniedException();
+            }
+
+            if (user.getAdmin() || user.getManager()) {
+                toRemove.getUsers().removeAll(dataService.getUsers());
+            }
+            toRemove.getUsers().remove(user);
+            if (toRemove.getUsers().isEmpty()) {
+                entityManager.get().createQuery("UPDATE Device d SET d.group=null WHERE d.group=:group").setParameter("group", toRemove).executeUpdate();
+                entityManager.get().remove(toRemove);
+            }
         }
     }
 
