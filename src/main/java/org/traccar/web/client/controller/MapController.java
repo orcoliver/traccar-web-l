@@ -86,34 +86,18 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
 
     @Override
     public void run() {
-        latestNonIdlePositionMap.clear();
         updateTimer = new Timer() {
             @Override
             public void run() {
                 update();
             }
         };
-        Application.getDataService().getLatestNonIdlePositions(new AsyncCallback<List<Position>>() {
-            @Override
-            public void onFailure(Throwable throwable) {
-                update();
-            }
-
-            @Override
-            public void onSuccess(List<Position> positions) {
-                for (Position position : positions) {
-                    latestNonIdlePositionMap.put(position.getDevice().getId(), position);
-                }
-                update();
-            }
-        });
+        update();
     }
 
     private Map<Long, Position> latestPositionMap = new HashMap<>();
 
     private Map<Long, Position> alertsMap = new HashMap<>();
-
-    private Map<Long, Position> latestNonIdlePositionMap = new HashMap<>();
 
     private Map<Long, Position> timestampMap = new HashMap<>();
 
@@ -146,34 +130,23 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
                     long timeout = (long) position.getDevice().getTimeout() * 1000;
                     boolean isOffline = currentTime - position.getTime().getTime() > timeout;
                     position.setStatus(isOffline ? Position.Status.OFFLINE : Position.Status.LATEST);
-                    position.setIcon(MarkerIcon.create(position));
+                    position.setIcon(MarkerIcon.create(position).setName(device.isShowName()));
                     deviceVisibilityHandler.offlineStatusChanged(device, isOffline);
                     // check 'idle since'
-                    if (position.getSpeed() != null) {
-                        if (position.getSpeed() > device.getIdleSpeedThreshold()) {
-                            latestNonIdlePositionMap.put(device.getId(), position);
-                            deviceVisibilityHandler.moving(device);
-                            position.setIdleStatus(Position.IdleStatus.MOVING);
-                        } else {
-                            Position latestNonIdlePosition = latestNonIdlePositionMap.get(device.getId());
-                            long minIdleTime = (long) device.getMinIdleTime() * 1000;
-                            if (latestNonIdlePosition != null
-                                    && position.getTime().getTime() - latestNonIdlePosition.getTime().getTime() > minIdleTime) {
-                                position.setIdleSince(latestNonIdlePosition.getTime());
-                                deviceVisibilityHandler.idle(device);
-                                position.setIdleStatus(Position.IdleStatus.IDLE);
-                            } else {
-                                position.setIdleStatus(Position.IdleStatus.PAUSED);
-                            }
-                        }
+                    if (position.getIdleStatus() == Position.IdleStatus.MOVING) {
+                        deviceVisibilityHandler.moving(device);
+                    } else if (position.getIdleStatus() == Position.IdleStatus.IDLE) {
+                        deviceVisibilityHandler.idle(device);
                     }
-                    device = deviceStore.findModelWithKey(Long.toString(device.getId()));
-                    device.setOdometer(position.getDistance());
-                    // check maintenances
-                    for (Maintenance maintenance : device.getMaintenances()) {
-                        if (device.getOdometer() >= maintenance.getLastService() + maintenance.getServiceInterval()) {
-                            alertsMap.put(device.getId(), position);
-                            break;
+                    Device storedDevice = deviceStore.findModelWithKey(Long.toString(device.getId()));
+                    if (storedDevice != null) {
+                        storedDevice.setOdometer(position.getDistance());
+                        // check maintenances
+                        for (Maintenance maintenance : storedDevice.getMaintenances()) {
+                            if (storedDevice.getOdometer() >= maintenance.getLastService() + maintenance.getServiceInterval()) {
+                                alertsMap.put(device.getId(), position);
+                                break;
+                            }
                         }
                     }
                 }
@@ -275,7 +248,7 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
 
     public void showArchivePositions(Track track) {
         List<Position> positions = track.getPositions();
-        PositionIcon icon = new PositionIcon(track.getStyle().getIconType() == null ?
+        PositionIcon icon = new PositionIcon(false, track.getStyle().getIconType() == null ?
                 PositionIconType.dotArchive : track.getStyle().getIconType());
         for (Position position : positions) {
             position.setIcon(icon);
@@ -290,6 +263,7 @@ public class MapController implements ContentController, MapView.MapHandler, Dev
         }
         List<Position> withTime = track.getTimePositions(ApplicationContext.getInstance().getUserSettings().getTimePrintInterval());
         mapView.showArchiveTime(withTime);
+        mapView.showArchiveArrows(withTime, track.getStyle().getTrackColor());
     }
 
     public void selectArchivePosition(Position position) {

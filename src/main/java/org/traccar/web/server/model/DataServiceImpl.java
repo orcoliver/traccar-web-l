@@ -61,6 +61,9 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
     @Inject
     private EventService eventService;
 
+    @Inject
+    private MovementDetector movementDetector;
+
     @Override
     public void init() throws ServletException {
         super.init();
@@ -383,9 +386,17 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
         User user = getSessionUser();
         List<Device> devices;
         if (user.getAdmin()) {
-            devices = getSessionEntityManager().createQuery("SELECT x FROM Device x LEFT JOIN FETCH x.latestPosition", Device.class).getResultList();
+            devices = getSessionEntityManager().createQuery("SELECT x FROM Device x LEFT JOIN FETCH x.latestPosition ORDER BY x.name", Device.class).getResultList();
         } else {
-            devices = new LinkedList<>(user.getAllAvailableDevices());
+            devices = new ArrayList<>(user.getAllAvailableDevices());
+            Collections.sort(devices, new Comparator<Device>() {
+                @Override
+                public int compare(Device o1, Device o2) {
+                    String n1 = o1.getName() == null ? "" : o1.getName();
+                    String n2 = o2.getName() == null ? "" : o2.getName();
+                    return n1.compareTo(n2);
+                }
+            });
         }
         if (full && !devices.isEmpty()) {
             List<Maintenance> maintenaces = getSessionEntityManager().createQuery("SELECT m FROM Maintenance m WHERE m.device IN :devices ORDER BY m.indexNo ASC", Maintenance.class)
@@ -508,6 +519,14 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
             tmp_device.setIcon(device.getIcon() == null ? null : entityManager.find(DeviceIcon.class, device.getIcon().getId()));
             tmp_device.setPhoto(device.getPhoto() == null ? null : entityManager.find(Picture.class, device.getPhoto().getId()));
             tmp_device.setGroup(newGroup);
+
+            tmp_device.setIconMode(device.getIconMode());
+            tmp_device.setIconRotation(device.isIconRotation());
+            tmp_device.setIconArrowMovingColor(device.getIconArrowMovingColor());
+            tmp_device.setIconArrowPausedColor(device.getIconArrowPausedColor());
+            tmp_device.setIconArrowStoppedColor(device.getIconArrowStoppedColor());
+            tmp_device.setIconArrowOfflineColor(device.getIconArrowOfflineColor());
+            tmp_device.setShowName(device.isShowName());
 
             double prevOdometer = tmp_device.getOdometer();
             tmp_device.setOdometer(device.getOdometer());
@@ -770,37 +789,25 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
                     }
 
                     position.setDistance(device.getOdometer());
+
+                    // calculate 'idle since'
+                    if (position.getSpeed() != null) {
+                        if (position.getSpeed() > device.getIdleSpeedThreshold()) {
+                            position.setIdleStatus(Position.IdleStatus.MOVING);
+                        } else {
+                            Date latestNonIdlePositionTime = movementDetector.getNonIdlePositionTime(device);
+                            long minIdleTime = (long) device.getMinIdleTime() * 1000;
+                            if (latestNonIdlePositionTime != null
+                                    && position.getTime().getTime() - latestNonIdlePositionTime.getTime() > minIdleTime) {
+                                position.setIdleSince(latestNonIdlePositionTime);
+                                position.setIdleStatus(Position.IdleStatus.IDLE);
+                            } else {
+                                position.setIdleStatus(Position.IdleStatus.PAUSED);
+                            }
+                        }
+                    }
+
                     positions.add(position);
-                }
-            }
-        }
-        return positions;
-    }
-
-    @RequireUser
-    @Transactional
-    @Override
-    public List<Position> getLatestNonIdlePositions() {
-        List<Position> positions = new LinkedList<>();
-        List<Device> devices = getDevices(false);
-        if (devices != null && !devices.isEmpty()) {
-            EntityManager entityManager = getSessionEntityManager();
-
-            for (Device device : devices) {
-                List<Position> position = entityManager.createQuery("SELECT p FROM Position p WHERE p.device = :device AND p.speed > 0 ORDER BY time DESC", Position.class)
-                        .setParameter("device", device)
-                        .setMaxResults(1)
-                        .getResultList();
-
-                if (position.isEmpty()) {
-                    position = entityManager.createQuery("SELECT p FROM Position p WHERE p.device = :device ORDER BY time ASC", Position.class)
-                        .setParameter("device", device)
-                        .setMaxResults(1)
-                        .getResultList();
-                }
-
-                if (!position.isEmpty()) {
-                    positions.add(position.get(0));
                 }
             }
         }
@@ -1079,11 +1086,19 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
                     sendCommand.invoke(activeDevice, backendCommand);
                 }
             }
-        } catch (ClassNotFoundException | NoSuchMethodException | InvocationTargetException
-                | IllegalAccessException | InstantiationException | JsonProcessingException e) {
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException
+                | InstantiationException | JsonProcessingException e) {
             log("Unable to invoke command through reflection", e);
             result.put("success", false);
             result.put("reason", e.getClass().getName() + ": " + e.getLocalizedMessage());
+        } catch (InvocationTargetException ite) {
+            log("Error invoking command through reflection", ite);
+            result.put("success", false);
+            if (ite.getCause() == null) {
+                result.put("reason", ite.getClass().getName() + ": " + ite.getLocalizedMessage());
+            } else {
+                result.put("reason", ite.getCause().getClass().getName() + ": " + ite.getCause().getLocalizedMessage());
+            }
         }
 
         try {

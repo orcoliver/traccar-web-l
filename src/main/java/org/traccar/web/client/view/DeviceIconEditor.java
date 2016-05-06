@@ -18,6 +18,8 @@ package org.traccar.web.client.view;
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.event.logical.shared.SelectionEvent;
 import com.google.gwt.event.logical.shared.SelectionHandler;
+import com.google.gwt.event.logical.shared.ValueChangeEvent;
+import com.google.gwt.event.logical.shared.ValueChangeHandler;
 import com.google.gwt.resources.client.ClientBundle;
 import com.google.gwt.resources.client.CssResource;
 import com.google.gwt.safehtml.shared.SafeHtml;
@@ -28,12 +30,15 @@ import com.google.gwt.uibinder.client.UiField;
 import com.google.gwt.uibinder.client.UiHandler;
 import com.google.gwt.user.client.rpc.AsyncCallback;
 import com.google.gwt.user.client.ui.HTML;
+import com.google.gwt.user.client.ui.Label;
 import com.google.gwt.user.client.ui.Widget;
 import com.sencha.gxt.cell.core.client.SimpleSafeHtmlCell;
 import com.sencha.gxt.core.client.IdentityValueProvider;
+import com.sencha.gxt.core.client.ValueProvider;
 import com.sencha.gxt.core.client.XTemplates;
 import com.sencha.gxt.core.client.resources.CommonStyles;
 import com.sencha.gxt.core.client.util.Margins;
+import com.sencha.gxt.core.client.util.ToggleGroup;
 import com.sencha.gxt.data.client.loader.RpcProxy;
 import com.sencha.gxt.data.shared.ListStore;
 import com.sencha.gxt.data.shared.ModelKeyProvider;
@@ -41,27 +46,28 @@ import com.sencha.gxt.data.shared.loader.*;
 import com.sencha.gxt.theme.base.client.listview.ListViewCustomAppearance;
 import com.sencha.gxt.widget.core.client.Dialog;
 import com.sencha.gxt.widget.core.client.ListView;
-import com.sencha.gxt.widget.core.client.Window;
 import com.sencha.gxt.widget.core.client.box.ConfirmMessageBox;
 import com.sencha.gxt.widget.core.client.button.TextButton;
 import com.sencha.gxt.widget.core.client.container.BorderLayoutContainer;
+import com.sencha.gxt.widget.core.client.container.Container;
+import com.sencha.gxt.widget.core.client.container.SimpleContainer;
 import com.sencha.gxt.widget.core.client.container.VerticalLayoutContainer;
 import com.sencha.gxt.widget.core.client.event.DialogHideEvent;
 import com.sencha.gxt.widget.core.client.event.SelectEvent;
+import com.sencha.gxt.widget.core.client.form.CheckBox;
+import com.sencha.gxt.widget.core.client.form.Radio;
+import com.sencha.gxt.widget.core.client.menu.ColorMenu;
 import org.traccar.web.client.i18n.Messages;
-import org.traccar.web.client.model.BaseAsyncCallback;
-import org.traccar.web.client.model.BaseStoreHandlers;
-import org.traccar.web.client.model.PicturesService;
-import org.traccar.web.client.model.PicturesServiceAsync;
+import org.traccar.web.client.model.*;
 import org.traccar.web.shared.model.*;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class DeviceMarkersDialog {
-    private static DeviceMarkersDialogUiBinder uiBinder = GWT.create(DeviceMarkersDialogUiBinder.class);
+public class DeviceIconEditor {
+    private static final DeviceIconEditorUiBinder uiBinder = GWT.create(DeviceIconEditorUiBinder.class);
 
-    interface DeviceMarkersDialogUiBinder extends UiBinder<Widget, DeviceMarkersDialog> {
+    interface DeviceIconEditorUiBinder extends UiBinder<Widget, DeviceIconEditor> {
     }
 
     interface Resources extends ClientBundle {
@@ -93,12 +99,84 @@ public class DeviceMarkersDialog {
         SafeHtml pictureView(Style style, String text, String pictureURL);
     }
 
-    public interface DeviceMarkerHandler {
-        void onSave(MarkerIcon icon);
+    static class ColorSelector {
+        final TextButton selectButton;
+        final ColorMenu menu;
+        final Label label;
+        String selection;
+        final ValueProvider<Device, String> valueProvider;
+
+        ColorSelector(TextButton selectButton, Label label, ValueProvider<Device, String> valueProvider) {
+            this.selectButton = selectButton;
+            this.menu = new ColorMenu();
+            this.label = label;
+            this.valueProvider = valueProvider;
+        }
+
+        void install(Device device) {
+            selection = valueProvider.getValue(device);
+            selectButton.setMenu(menu);
+            menu.getPalette().addValueChangeHandler(new ValueChangeHandler<String>() {
+                @Override
+                public void onValueChange(ValueChangeEvent<String> event) {
+                    selection = event.getValue();
+                    menu.hide(true);
+                    selectionChanged();
+                }
+            });
+            selectionChanged();
+        }
+
+        void selectionChanged() {
+            label.getElement().getStyle().setProperty("backgroundColor", "#" + selection);
+        }
+
+        void flush(Device device) {
+            valueProvider.setValue(device, selection);
+        }
     }
 
     @UiField
-    Window window;
+    SimpleContainer panel;
+
+    @UiField
+    BorderLayoutContainer mainContainer;
+
+    @UiField
+    Radio iconModeIcon;
+
+    @UiField
+    Radio iconModeArrow;
+
+    @UiField
+    CheckBox iconRotation;
+
+    @UiField
+    CheckBox showName;
+
+    @UiField
+    Label iconArrowMovingColor;
+
+    @UiField
+    TextButton selectIconArrowMovingColor;
+
+    @UiField
+    Label iconArrowPausedColor;
+
+    @UiField
+    TextButton selectIconArrowPausedColor;
+
+    @UiField
+    Label iconArrowStoppedColor;
+
+    @UiField
+    TextButton selectIconArrowStoppedColor;
+
+    @UiField
+    Label iconArrowOfflineColor;
+
+    @UiField
+    TextButton selectIconArrowOfflineColor;
 
     @UiField(provided = true)
     ListView<MarkerIcon, MarkerIcon> view;
@@ -138,8 +216,6 @@ public class DeviceMarkersDialog {
 
     final PicturesServiceAsync picturesService = GWT.create(PicturesService.class);
 
-    final DeviceMarkerHandler handler;
-
     static class MergingCallback extends BaseAsyncCallback<List<DeviceIcon>> {
         final AsyncCallback<List<MarkerIcon>> markerLoaderCallback;
 
@@ -175,8 +251,12 @@ public class DeviceMarkersDialog {
     final Resources resources = GWT.create(Resources.class);
     final MarkerListItemTemplate renderer = GWT.create(MarkerListItemTemplate.class);
 
-    public DeviceMarkersDialog(final MarkerIcon selectedIcon, DeviceMarkerHandler handler) {
-        this.handler = handler;
+    final Device device;
+
+    final ColorSelector[] arrowColors;
+
+    public DeviceIconEditor(final Device device) {
+        this.device = device;
 
         ModelKeyProvider<MarkerIcon> keyProvider = new ModelKeyProvider<MarkerIcon>() {
             @Override
@@ -201,8 +281,6 @@ public class DeviceMarkersDialog {
         };
 
         store = new ListStore<>(keyProvider);
-        Loader<Object, List<MarkerIcon>> loader = new Loader<>(hybridProxy);
-        loader.addLoadHandler(new ListStoreBinding<>(store));
 
         view = new ListView<>(store, new IdentityValueProvider<MarkerIcon>() {
             @Override
@@ -237,9 +315,7 @@ public class DeviceMarkersDialog {
 
         uiBinder.createAndBindUi(this);
 
-        window.setHeadingText(i18n.overlayType(UserSettings.OverlayType.MARKERS));
-
-        selected = selectedIcon;
+        selected = MarkerIcon.create(device);
         store.addStoreHandlers(new BaseStoreHandlers<MarkerIcon>() {
             @Override
             public void onAnything() {
@@ -253,28 +329,58 @@ public class DeviceMarkersDialog {
                 }
             }
         });
+
+        // set up 'Icon Mode' radio buttons
+        ToggleGroup iconModeRadibuttons = new ToggleGroup();
+        iconModeRadibuttons.add(iconModeIcon);
+        iconModeRadibuttons.add(iconModeArrow);
+
+        iconModeIcon.setBoxLabel(i18n.deviceIconMode(DeviceIconMode.ICON));
+        iconModeArrow.setBoxLabel(i18n.deviceIconMode(DeviceIconMode.ARROW));
+
+        iconModeIcon.setValue(device.getIconMode() == DeviceIconMode.ICON);
+        iconModeArrow.setValue(device.getIconMode() == DeviceIconMode.ARROW);
+
+        iconRotation.setValue(device.isIconRotation());
+        showName.setValue(device.isShowName());
+
+        // set up color buttons
+        DeviceProperties properties = GWT.create(DeviceProperties.class);
+
+        arrowColors = new ColorSelector[] {
+                new ColorSelector(selectIconArrowMovingColor, iconArrowMovingColor, properties.iconArrowMovingColor()),
+                new ColorSelector(selectIconArrowPausedColor, iconArrowPausedColor, properties.iconArrowPausedColor()),
+                new ColorSelector(selectIconArrowStoppedColor, iconArrowStoppedColor, properties.iconArrowStoppedColor()),
+                new ColorSelector(selectIconArrowOfflineColor, iconArrowOfflineColor, properties.iconArrowOfflineColor())
+        };
+
+        for (ColorSelector colorSelector : arrowColors) {
+            colorSelector.install(device);
+        }
+    }
+
+    public void loadIcons() {
+        store.clear();
+        Loader<Object, List<MarkerIcon>> loader = new Loader<>(hybridProxy);
+        loader.addLoadHandler(new ListStoreBinding<>(store));
         loader.load();
-
-        selectionChanged();
     }
 
-    public void show() {
-        window.show();
-    }
+    public void flush() {
+        if (iconModeIcon.getValue()) {
+            device.setIconMode(DeviceIconMode.ICON);
+        } else if (iconModeArrow.getValue()) {
+            device.setIconMode(DeviceIconMode.ARROW);
+        }
+        device.setIconRotation(iconRotation.getValue());
+        device.setShowName(showName.getValue());
+        for (ColorSelector colorSelector : arrowColors) {
+            colorSelector.flush(device);
+        }
 
-    public void hide() {
-        window.hide();
-    }
-
-    @UiHandler("saveButton")
-    public void onOKClicked(SelectEvent event) {
-        handler.onSave(view.getSelectionModel().getSelectedItem());
-        hide();
-    }
-
-    @UiHandler("cancelButton")
-    public void onCancelClicked(SelectEvent event) {
-        hide();
+        selected = view.getSelectionModel().getSelectedItem();
+        device.setIconType(selected.getBuiltInIcon());
+        device.setIcon(selected.getDatabaseIcon());
     }
 
     private void selectionChanged() {
@@ -358,5 +464,9 @@ public class DeviceMarkersDialog {
             }
         });
         dialog.show();
+    }
+
+    public Container getPanel() {
+        return panel;
     }
 }
