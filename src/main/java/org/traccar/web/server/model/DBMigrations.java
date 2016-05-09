@@ -54,14 +54,13 @@ public class DBMigrations {
                 new SetDefaultDeviceIconType(),
                 new SetDefaultDeviceIconModeAndRotation(),
                 new SetDefaultArrowIconSettings(),
-                new SetDefaultDeviceShowName(),
+                new SetDefaultDeviceShowNameProtocolAndOdometer(),
                 new SetDefaultHashImplementation(),
                 new SetGlobalHashSalt(),
                 new SetDefaultUserSettings(),
                 new SetArchiveDefaultColumns(),
                 new SetGeoFenceAllDevicesFlag(),
                 new SetReportsFilterAndPreview(),
-                new SetDefaultFollowedDeviceZoomLevel(),
                 new SetDefaultNotificationExpirationPeriod(),
                 new SetDefaultExpiredFlagForEvents()
         }) {
@@ -383,15 +382,6 @@ public class DBMigrations {
         }
     }
 
-    static class SetDefaultFollowedDeviceZoomLevel implements Migration {
-        @Override
-        public void migrate(EntityManager em) throws Exception {
-            em.createQuery("UPDATE " + UserSettings.class.getName() + " S SET S.followedDeviceZoomLevel = :zlevel WHERE S.followedDeviceZoomLevel IS NULL")
-                    .setParameter("zlevel", UserSettings.DEFAULT_ZOOM_TO_FOLLOWED_DEVICE_LEVEL)
-                    .executeUpdate();
-        }
-    }
-
     static class SetDefaultNotificationExpirationPeriod implements Migration {
         @Override
         public void migrate(EntityManager em) throws Exception {
@@ -439,12 +429,14 @@ public class DBMigrations {
         }
     }
 
-    static class SetDefaultDeviceShowName implements Migration {
+    static class SetDefaultDeviceShowNameProtocolAndOdometer implements Migration {
         @Override
         public void migrate(EntityManager em) throws Exception {
-            em.createQuery("UPDATE " + Device.class.getName() + " D SET D.showName=:true WHERE D.showName IS NULL")
-                    .setParameter("true", true)
-                    .executeUpdate();
+            for (String prop : new String[] { "showName", "showProtocol", "showOdometer" }) {
+                em.createQuery("UPDATE " + Device.class.getName() + " D SET D." + prop + "=:true WHERE D." + prop + " IS NULL")
+                        .setParameter("true", true)
+                        .executeUpdate();
+            }
         }
     }
 }

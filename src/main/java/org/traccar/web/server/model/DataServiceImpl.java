@@ -76,6 +76,11 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
         } catch (Exception e) {
             throw new RuntimeException("Unable to perform DB migrations", e);
         }
+
+        /**
+         * Start movement detector
+         */
+        movementDetector.start();
     }
 
     EntityManager getSessionEntityManager() {
@@ -527,6 +532,8 @@ public class DataServiceImpl extends RemoteServiceServlet implements DataService
             tmp_device.setIconArrowStoppedColor(device.getIconArrowStoppedColor());
             tmp_device.setIconArrowOfflineColor(device.getIconArrowOfflineColor());
             tmp_device.setShowName(device.isShowName());
+            tmp_device.setShowProtocol(device.isShowProtocol());
+            tmp_device.setShowOdometer(device.isShowOdometer());
 
             double prevOdometer = tmp_device.getOdometer();
             tmp_device.setOdometer(device.getOdometer());
