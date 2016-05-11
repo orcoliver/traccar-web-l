@@ -209,7 +209,7 @@ public class ArchiveController implements ContentController, ArchiveView.Archive
                     .append("&t=").append(position.getTime().getTime() / 1000);
         }
 
-        RequestBuilder builder = new RequestBuilder(RequestBuilder.POST, "https://router.project-osrm.org/match");
+        RequestBuilder builder = new RequestBuilder(RequestBuilder.POST, ApplicationContext.getInstance().getApplicationSettings().getMatchServiceURL());
         builder.setHeader("Content-type", "application/x-www-form-urlencoded");
         try {
             builder.sendRequest(body.toString(), new RequestCallback() {
@@ -246,13 +246,13 @@ public class ArchiveController implements ContentController, ArchiveView.Archive
                         snappedTracks.put(device.getId(), snappedTrack);
                         showArchive(device);
                     } else {
-                        GWT.log("Incorrect response code: " + response.getStatusCode());
+                        new AlertMessageBox(i18n.error(), i18n.errSnapToRoads(response.getStatusCode(), response.getText())).show();
                     }
                 }
 
                 @Override
                 public void onError(Request request, Throwable exception) {
-                    GWT.log("Request error", exception);
+                    new AlertMessageBox(i18n.error(), i18n.errSnapToRoads(-1, exception.getLocalizedMessage())).show();
                 }
             });
         } catch (RequestException re) {
