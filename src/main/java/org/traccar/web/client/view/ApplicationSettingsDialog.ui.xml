@@ -33,6 +33,13 @@
             </form:widget>
         </form:FieldLabel>
       </container:child>
+        <container:child layoutData="{verticalLayoutData}">
+            <form:FieldLabel text="{i18n.allowCommandsOnlyForAdmins}" labelWidth="230">
+                <form:widget>
+                    <form:CheckBox ui:field="allowCommandsOnlyForAdmins" />
+                </form:widget>
+            </form:FieldLabel>
+        </container:child>
       <container:child layoutData="{verticalLayoutData}">
           <form:FieldLabel text="{i18n.updateInterval}" labelWidth="230">
               <form:widget>
@@ -76,7 +83,7 @@
         <container:child layoutData="{verticalLayoutData}">
             <form:FieldLabel text="{i18n.notificationExpiryPeriod} ({i18n.minute})" labelWidth="230">
                 <form:widget>
-                    <form:NumberField editor="{shortPropertyEditor}"
+                    <form:NumberField editor="{integerPropertyEditor}"
                                       ui:field="notificationExpirationPeriod"
                                       allowNegative="false"
                                       allowDecimals="false"

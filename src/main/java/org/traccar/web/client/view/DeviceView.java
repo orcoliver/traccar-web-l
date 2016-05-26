@@ -55,7 +55,6 @@ import com.sencha.gxt.widget.core.client.button.TextButton;
 import com.sencha.gxt.widget.core.client.event.CellDoubleClickEvent;
 import com.sencha.gxt.widget.core.client.event.RowMouseDownEvent;
 import com.sencha.gxt.widget.core.client.event.SelectEvent;
-import com.sencha.gxt.widget.core.client.event.ShowEvent;
 import com.sencha.gxt.widget.core.client.form.CheckBox;
 import com.sencha.gxt.widget.core.client.form.StoreFilterField;
 import com.sencha.gxt.widget.core.client.grid.ColumnConfig;
@@ -505,7 +504,8 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
                       final ListStore<Device> globalDeviceStore,
                       final ListStore<GeoFence> geoFenceStore,
                       GroupStore groupStore,
-                      final ListStore<Report> reportStore) {
+                      final ListStore<Report> reportStore,
+                      final ReportsMenu.ReportHandler reportHandler) {
         this.deviceHandler = deviceHandler;
         this.geoFenceHandler = geoFenceHandler;
         this.commandHandler = commandHandler;
@@ -700,15 +700,26 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
             }
         };
         grid.setView(view);
-        grid.setContextMenu(createDeviceGridContextMenu(reportStore));
+        grid.setContextMenu(createDeviceGridContextMenu(reportStore, reportHandler));
 
         // configure device store filtering
         deviceFilter = new StoreFilterField<GroupedDevice>() {
             @Override
             protected boolean doSelect(Store<GroupedDevice> store, GroupedDevice parent, GroupedDevice item, String filter) {
-                return filter.trim().isEmpty() ||
-                        deviceStore.isGroup(item) ||
-                        item.getName().toLowerCase().contains(filter.toLowerCase());
+                return filter.trim().isEmpty() || matches(item, filter);
+            }
+
+            boolean matches(GroupedDevice item, String filter) {
+                if (deviceStore.isGroup(item)) {
+                    for (GroupedDevice child : deviceStore.getChildren(item)) {
+                        if (matches(child, filter)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                } else {
+                    return item.getName().toLowerCase().contains(filter.toLowerCase());
+                }
             }
         };
         deviceFilter.bind(this.deviceStore);
@@ -754,15 +765,13 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
         editing.addEditor(colRecordTrace, new CheckBox());
 
         boolean readOnly = ApplicationContext.getInstance().getUser().getReadOnly();
-        boolean admin = ApplicationContext.getInstance().getUser().getAdmin();
-        boolean manager = ApplicationContext.getInstance().getUser().getManager();
 
-        shareButton.setVisible(!readOnly && (admin || manager));
+        shareButton.setVisible(allowDeviceSharing());
 
         addButton.setVisible(!readOnly);
         editButton.setVisible(!readOnly);
         removeButton.setVisible(!readOnly);
-        commandButton.setVisible(!readOnly);
+        commandButton.setVisible(allowCommandsSending());
         toggleManagementButtons(null);
     }
 
@@ -864,7 +873,9 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
     }
 
     public void selectDevice(Device device) {
-        grid.getSelectionModel().select(deviceStore.findModel(device), false);
+        GroupedDevice item = deviceStore.findModel(device);
+        grid.getSelectionModel().select(item, false);
+        grid.getView().focusRow(grid.getStore().indexOf(item));
         deviceHandler.onSelected((Device) grid.getSelectionModel().getSelectedItem());
     }
 
@@ -888,15 +899,39 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
             selection = null;
         }
 
-        boolean admin = ApplicationContext.getInstance().getUser().getAdmin();
-        boolean manager = ApplicationContext.getInstance().getUser().getManager();
-        boolean allowDeviceManagement = !ApplicationContext.getInstance().getApplicationSettings().isDisallowDeviceManagementByUsers();
-
-        addButton.setEnabled(allowDeviceManagement || editingGeoFences() || admin || manager);
-        editButton.setEnabled(selection != null && (allowDeviceManagement || editingGeoFences() || admin || manager));
-        removeButton.setEnabled(selection != null && (allowDeviceManagement || editingGeoFences() || admin || manager));
-        commandButton.setEnabled(selection != null && !editingGeoFences() && (allowDeviceManagement || admin || manager));
+        addButton.setEnabled(allowDeviceManagement() || editingGeoFences());
+        editButton.setEnabled(selection != null && (allowDeviceManagement() || editingGeoFences()));
+        removeButton.setEnabled(selection != null && (allowDeviceManagement() || editingGeoFences()));
+        commandButton.setEnabled(selection != null && !editingGeoFences() && allowCommandsSending() && allowDeviceManagement());
         shareButton.setEnabled(selection != null);
+    }
+
+    private boolean allowDeviceManagement() {
+        boolean readOnly = ApplicationContext.getInstance().getUser().getReadOnly();
+        if (!readOnly) {
+            boolean admin = ApplicationContext.getInstance().getUser().getAdmin();
+            boolean manager = ApplicationContext.getInstance().getUser().getManager();
+            return admin || manager || !ApplicationContext.getInstance().getApplicationSettings().isDisallowDeviceManagementByUsers();
+        }
+        return false;
+    }
+
+    private boolean allowCommandsSending() {
+        boolean readOnly = ApplicationContext.getInstance().getUser().getReadOnly();
+        if (!readOnly) {
+            boolean admin = ApplicationContext.getInstance().getUser().getAdmin();
+            return admin || !ApplicationContext.getInstance().getApplicationSettings().isAllowCommandsOnlyForAdmins();
+        }
+        return false;
+    }
+
+    private boolean allowDeviceSharing() {
+        boolean readOnly = ApplicationContext.getInstance().getUser().getReadOnly();
+        if (!readOnly) {
+            return ApplicationContext.getInstance().getUser().getAdmin()
+                    || ApplicationContext.getInstance().getUser().getManager();
+        }
+        return false;
     }
 
     interface HeaderIconTemplate extends XTemplates {
@@ -915,43 +950,60 @@ public class DeviceView implements RowMouseDownEvent.RowMouseDownHandler, CellDo
         ImageResource footprints();
     }
 
-    private Menu createDeviceGridContextMenu(ListStore<Report> reportStore) {
+    private Menu createDeviceGridContextMenu(final ListStore<Report> reportStore,
+                                             final ReportsMenu.ReportHandler reportHandler) {
         Menu menu = new Menu();
-        MenuItem edit = new MenuItem(i18n.edit());
-        edit.addSelectionHandler(new SelectionHandler<Item>() {
-            @Override
-            public void onSelection(SelectionEvent<Item> event) {
-                editDevice();
-            }
-        });
-        menu.add(edit);
-        MenuItem share = new MenuItem(i18n.share());
-        share.addSelectionHandler(new SelectionHandler<Item>() {
-            @Override
-            public void onSelection(SelectionEvent<Item> event) {
-                shareDevice();
-            }
-        });
-        menu.add(share);
-        MenuItem remove = new MenuItem(i18n.remove());
-        remove.addSelectionHandler(new SelectionHandler<Item>() {
-            @Override
-            public void onSelection(SelectionEvent<Item> event) {
-                removeDevice();
-            }
-        });
-        menu.add(remove);
-        MenuItem command = new MenuItem(i18n.command());
-        command.addSelectionHandler(new SelectionHandler<Item>() {
-            @Override
-            public void onSelection(SelectionEvent<Item> event) {
-                sendCommand();
-            }
-        });
-        menu.add(command);
+        if (allowDeviceManagement()) {
+            MenuItem edit = new MenuItem(i18n.edit());
+            edit.addSelectionHandler(new SelectionHandler<Item>() {
+                @Override
+                public void onSelection(SelectionEvent<Item> event) {
+                    editDevice();
+                }
+            });
+            menu.add(edit);
+        }
+        if (allowDeviceSharing()) {
+            MenuItem share = new MenuItem(i18n.share());
+            share.addSelectionHandler(new SelectionHandler<Item>() {
+                @Override
+                public void onSelection(SelectionEvent<Item> event) {
+                    shareDevice();
+                }
+            });
+            menu.add(share);
+        }
+        if (allowDeviceManagement()) {
+            MenuItem remove = new MenuItem(i18n.remove());
+            remove.addSelectionHandler(new SelectionHandler<Item>() {
+                @Override
+                public void onSelection(SelectionEvent<Item> event) {
+                    removeDevice();
+                }
+            });
+            menu.add(remove);
+        }
+        if (allowCommandsSending()) {
+            MenuItem command = new MenuItem(i18n.command());
+            command.addSelectionHandler(new SelectionHandler<Item>() {
+                @Override
+                public void onSelection(SelectionEvent<Item> event) {
+                    sendCommand();
+                }
+            });
+            menu.add(command);
+        }
 
         MenuItem report = new MenuItem(i18n.report());
-        report.setSubMenu(new ReportsMenu(reportStore));
+        report.setSubMenu(new ReportsMenu(reportStore, reportHandler, new ReportsMenu.ReportSettingsHandler() {
+            @Override
+            public void setSettings(ReportsDialog dialog) {
+                GroupedDevice node = grid.getSelectionModel().getSelectedItem();
+                if (deviceStore.isDevice(node)) {
+                    dialog.selectDevice((Device) node);
+                }
+            }
+        }));
         menu.add(report);
 
         return menu;

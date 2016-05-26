@@ -55,6 +55,7 @@ public class DBMigrations {
                 new SetDefaultDeviceIconModeAndRotation(),
                 new SetDefaultArrowIconSettings(),
                 new SetDefaultDeviceShowNameProtocolAndOdometer(),
+                new SetDefaultDeviceIconArrowRadius(),
                 new SetDefaultHashImplementation(),
                 new SetGlobalHashSalt(),
                 new SetDefaultUserSettings(),
@@ -63,7 +64,8 @@ public class DBMigrations {
                 new SetReportsFilterAndPreview(),
                 new SetDefaultNotificationExpirationPeriod(),
                 new SetDefaultExpiredFlagForEvents(),
-                new SetDefaultMatchServiceURL()
+                new SetDefaultMatchServiceURL(),
+                new SetDefaultAllowCommandsOnlyForAdmins()
         }) {
             em.getTransaction().begin();
             try {
@@ -446,6 +448,24 @@ public class DBMigrations {
         public void migrate(EntityManager em) throws Exception {
             em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceURL = :url WHERE S.matchServiceURL IS NULL")
                     .setParameter("url", ApplicationSettings.DEFAULT_MATCH_SERVICE_URL)
+                    .executeUpdate();
+        }
+    }
+
+    static class SetDefaultDeviceIconArrowRadius implements Migration {
+        @Override
+        public void migrate(EntityManager em) throws Exception {
+            em.createQuery("UPDATE " + Device.class.getName() + " D SET D.iconArrowRadius = :radius WHERE D.iconArrowRadius IS NULL")
+                    .setParameter("radius", Device.DEFAULT_ARROW_RADIUS)
+                    .executeUpdate();
+        }
+    }
+
+    static class SetDefaultAllowCommandsOnlyForAdmins implements Migration {
+        @Override
+        public void migrate(EntityManager em) throws Exception {
+            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.allowCommandsOnlyForAdmins = :false WHERE S.allowCommandsOnlyForAdmins IS NULL")
+                    .setParameter("false", false)
                     .executeUpdate();
         }
     }
