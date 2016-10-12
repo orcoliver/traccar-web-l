@@ -65,7 +65,8 @@ public class DBMigrations {
                 new SetGeoFenceAllDevicesFlag(),
                 new SetReportsFilterAndPreview(),
                 new SetDefaultExpiredFlagForEvents(),
-                new SetDefaultMatchServiceURL()
+                new SetDefaultMatchServiceSettings(),
+                new RemoveMapQuest()
         }) {
             em.getTransaction().begin();
             try {
@@ -447,11 +448,17 @@ public class DBMigrations {
         }
     }
 
-    static class SetDefaultMatchServiceURL implements Migration {
+    static class SetDefaultMatchServiceSettings implements Migration {
         @Override
         public void migrate(EntityManager em) throws Exception {
-            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceURL = :url WHERE S.matchServiceURL IS NULL")
-                    .setParameter("url", ApplicationSettings.DEFAULT_MATCH_SERVICE_URL)
+            // for existing installations, which are using v4 and has no 'matchServiceType' set yet
+            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceType = :msType WHERE S.matchServiceURL IS NOT NULL")
+                    .setParameter("msType", MatchServiceType.OSRM_V4)
+                    .executeUpdate();
+            // for new installations without match service type set
+            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceType = :msType, S.matchServiceURL = :url WHERE S.matchServiceType IS NULL")
+                    .setParameter("msType", MatchServiceType.OSRM_V5)
+                    .setParameter("url", MatchServiceType.OSRM_V5.getDefaultURL())
                     .executeUpdate();
         }
     }
@@ -470,6 +477,17 @@ public class DBMigrations {
         public void migrate(EntityManager em) throws Exception {
             em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.allowCommandsOnlyForAdmins = :false WHERE S.allowCommandsOnlyForAdmins IS NULL")
                     .setParameter("false", false)
+                    .executeUpdate();
+        }
+    }
+
+    static class RemoveMapQuest implements Migration {
+        @Override
+        public void migrate(EntityManager em) throws Exception {
+            em.createNativeQuery("UPDATE user_settings SET mapType=? WHERE mapType=? OR mapType=?")
+                    .setParameter(1, UserSettings.MapType.OSM.name())
+                    .setParameter(2, "MAPQUEST_ROAD")
+                    .setParameter(3, "MAPQUEST_AERIAL")
                     .executeUpdate();
         }
     }
