@@ -66,7 +66,8 @@ public class DBMigrations {
                 new SetReportsFilterAndPreview(),
                 new SetDefaultExpiredFlagForEvents(),
                 new SetDefaultMatchServiceSettings(),
-                new RemoveMapQuest()
+                new RemoveMapQuest(),
+                new SetUserHashSalt()
         }) {
             em.getTransaction().begin();
             try {
@@ -241,7 +242,7 @@ public class DBMigrations {
         @Override
         public void migrate(EntityManager em) throws Exception {
             em.createQuery("UPDATE " + ApplicationSettings.class.getSimpleName() + " S SET S.defaultPasswordHash = :dh WHERE S.defaultPasswordHash IS NULL")
-                    .setParameter("dh", PasswordHashMethod.MD5)
+                    .setParameter("dh", PasswordHashMethod.PBKDF2WithHmacSha1)
                     .executeUpdate();
         }
     }
@@ -452,7 +453,7 @@ public class DBMigrations {
         @Override
         public void migrate(EntityManager em) throws Exception {
             // for existing installations, which are using v4 and has no 'matchServiceType' set yet
-            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceType = :msType WHERE S.matchServiceURL IS NOT NULL")
+            em.createQuery("UPDATE " + ApplicationSettings.class.getName() + " S SET S.matchServiceType = :msType WHERE S.matchServiceURL IS NOT NULL AND S.matchServiceType IS NULL")
                     .setParameter("msType", MatchServiceType.OSRM_V4)
                     .executeUpdate();
             // for new installations without match service type set
@@ -489,6 +490,16 @@ public class DBMigrations {
                     .setParameter(2, "MAPQUEST_ROAD")
                     .setParameter(3, "MAPQUEST_AERIAL")
                     .executeUpdate();
+        }
+    }
+
+    static class SetUserHashSalt implements Migration {
+        @Override
+        public void migrate(EntityManager em) throws Exception {
+            for (User user : em.createQuery("SELECT x FROM " + User.class.getName() + " x WHERE x.salt IS NULL", User.class)
+                    .getResultList()) {
+                user.setSalt(PasswordUtils.generateRandomUserSalt());
+            }
         }
     }
 }
