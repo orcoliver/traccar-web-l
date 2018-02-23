@@ -48,6 +48,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -55,9 +56,17 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Singleton
 public class NotificationServiceImpl extends RemoteServiceServlet implements NotificationService {
+    private static Pattern EVENT_RULE_TIME_FRAME_PATTERN = Pattern.compile(EventRule.TIME_FRAME_REGEX, Pattern.CASE_INSENSITIVE);
+    private static Pattern EVENT_RULE_DAY_OF_WEEK_FRAME_PATTERN = Pattern.compile(EventRule.DAY_OF_WEEK_FRAME_REGEX, Pattern.CASE_INSENSITIVE);
+    private static Pattern EVENT_RULE_COURSE_PATTERN = Pattern.compile(EventRule.COURSE_REGEX);
+    private static SimpleDateFormat EVENT_RULE_TIME_FRAME_FORMAT_01 = new SimpleDateFormat("h:mm a");
+    private static SimpleDateFormat EVENT_RULE_TIME_FRAME_FORMAT_02 = new SimpleDateFormat("h a");
+
     @Inject
     private Provider<User> sessionUser;
 
@@ -91,6 +100,15 @@ public class NotificationServiceImpl extends RemoteServiceServlet implements Not
                 eventTypes.addAll(user.getNotificationEvents());
             }
 
+            Map<User, Set<EventRule>> eventRules = new HashMap<>();
+            for (EventRule eventRule : entityManager.get().createQuery("FROM EventRule", EventRule.class).getResultList()) {
+                Set<EventRule> userRules = eventRules.get(eventRule.getUser());
+                if (userRules == null) {
+                    eventRules.put(eventRule.getUser(), userRules = new HashSet<>());
+                }
+                userRules.add(eventRule);
+            }
+
             if (eventTypes.isEmpty()) {
                 return;
             }
@@ -101,55 +119,62 @@ public class NotificationServiceImpl extends RemoteServiceServlet implements Not
             Map<User, List<User>> managers = new HashMap<>();
             Date currentDate = new Date();
 
-            for (DeviceEvent event : entityManager.get().createQuery(
+            if (!eventTypes.isEmpty()) {
+                for (DeviceEvent event : entityManager.get().createQuery(
                     "SELECT e FROM DeviceEvent e INNER JOIN FETCH e.position" +
                             " WHERE e.notificationSent = :false" +
                             " AND e.expired = :false" +
                             " AND e.type IN (:types)", DeviceEvent.class)
-                                    .setFlushMode(FlushModeType.COMMIT)
+                        .setFlushMode(FlushModeType.COMMIT)
                                     .setParameter("false", false)
-                                    .setParameter("types", eventTypes)
-                                    .getResultList()) {
-                // check whether event is expired
-                if (currentDate.getTime() - event.getTime().getTime() > appSettings.getNotificationExpirationPeriod() * 1000 * 60) {
-                    event.setExpired(true);
-                    continue;
-                }
+                        .setParameter("types", eventTypes)
+                        .getResultList()) {
 
-                Device device = event.getDevice();
+                    // check whether device supports sending of notifications
+                    Device device = event.getDevice();
+                    if (!device.isSendNotifications()) {
+                        continue;
+                    }
 
-                for (User user : device.getUsers()) {
-                    addEvent(events, user, event);
-                    List<User> userManagers = managers.get(user);
-                    if (userManagers == null) {
-                        userManagers = new LinkedList<>();
-                        User manager = user.getManagedBy();
-                        while (manager != null) {
-                            if (!manager.getNotificationEvents().isEmpty()) {
-                                userManagers.add(manager);
+                    // check whether event is expired
+                    if (currentDate.getTime() - event.getTime().getTime() > appSettings.getNotificationExpirationPeriod() * 1000 * 60) {
+                        event.setExpired(true);
+                        continue;
+                    }
+
+                    for (User user : device.getUsers()) {
+                        addEvent(events, user, event, eventRules.get(user));
+                        List<User> userManagers = managers.get(user);
+                        if (userManagers == null) {
+                            userManagers = new LinkedList<>();
+                            User manager = user.getManagedBy();
+                            while (manager != null) {
+                                if (!manager.getNotificationEvents().isEmpty()) {
+                                    userManagers.add(manager);
+                                }
+                                manager = manager.getManagedBy();
                             }
-                            manager = manager.getManagedBy();
+                            if (userManagers.isEmpty()) {
+                                userManagers = Collections.emptyList();
+                            }
+                            managers.put(user, userManagers);
                         }
-                        if (userManagers.isEmpty()) {
-                            userManagers = Collections.emptyList();
+                        for (User manager : userManagers) {
+                            addEvent(events, manager, event, eventRules.get(manager));
                         }
-                        managers.put(user, userManagers);
                     }
-                    for (User manager : userManagers) {
-                        addEvent(events, manager, event);
-                    }
-                }
 
-                if (admins == null) {
-                    admins = entityManager.get()
+                    if (admins == null) {
+                        admins = entityManager.get()
                             .createQuery("SELECT u FROM User u WHERE u.admin=:true", User.class)
                             .setFlushMode(FlushModeType.COMMIT)
-                            .setParameter("true", true)
-                            .getResultList();
-                }
+                                .setParameter("true", true)
+                                .getResultList();
+                    }
 
-                for (User admin : admins) {
-                    addEvent(events, admin, event);
+                    for (User admin : admins) {
+                        addEvent(events, admin, event, eventRules.get(admin));
+                    }
                 }
             }
 
@@ -187,18 +212,181 @@ public class NotificationServiceImpl extends RemoteServiceServlet implements Not
             }
         }
 
-        private void addEvent(Map<User, Set<DeviceEvent>> events, User user, DeviceEvent event) {
-            // check whether user wants to receive such notification events
-            if (!user.getNotificationEvents().contains(event.getType())) {
-                return;
+        protected boolean isTimeFrameOk(Position pos, String timeFrame, TimeZone timeZone) {
+            if (timeFrame == null || timeFrame.trim().isEmpty()) {
+                return true;
             }
+
+            int timeZoneShift = -timeZone.getOffset(pos.getTime().getTime());
+            Date posTime = new Date();
+            posTime.setTime(2*24*60*60*1000);
+            posTime.setHours(pos.getTime().getHours());
+            posTime.setMinutes(pos.getTime().getMinutes());
+
+            timeFrame = timeFrame.trim().toUpperCase();
+            Matcher matcher = EVENT_RULE_TIME_FRAME_PATTERN.matcher(timeFrame);
+            while (matcher.find()) {
+                String fromTime = timeFrame.substring(matcher.start(1), matcher.end(1));
+                String toTime = timeFrame.substring(matcher.start(4), matcher.end(4));
+                fromTime = fromTime.replace("AM", " AM");
+                fromTime = fromTime.replace("PM", " PM");
+                toTime = toTime.replace("AM", " AM");
+                toTime = toTime.replace("PM", " PM");
+                Date fromEventRule, toEventRule, fromEventRule0 = new Date(0), toEventRule0 = new Date(0)
+                        , fromEventRuleMinus1 = new Date(0), toEventRuleMinus1 = new Date(0)
+                        , fromEventRulePlus1 = new Date(0), toEventRulePlus1 = new Date(0);
+                try {
+                    fromEventRule = EVENT_RULE_TIME_FRAME_FORMAT_01.parse(fromTime);
+                } catch (ParseException e) {
+                    try {
+                        fromEventRule = EVENT_RULE_TIME_FRAME_FORMAT_02.parse(fromTime);
+                    } catch (ParseException e1) {
+                        continue;
+                    }
+                }
+                try {
+                    toEventRule = EVENT_RULE_TIME_FRAME_FORMAT_01.parse(toTime);
+                } catch (ParseException e) {
+                    try {
+                        toEventRule = EVENT_RULE_TIME_FRAME_FORMAT_02.parse(toTime);
+                    } catch (ParseException e1) {
+                        continue;
+                    }
+                }
+                fromEventRule0.setTime(2*24*60*60*1000 + fromEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+                toEventRule0.setTime(2*24*60*60*1000 + toEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+
+                fromEventRuleMinus1.setTime(1*24*60*60*1000 + fromEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+                toEventRuleMinus1.setTime(1*24*60*60*1000 + toEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+
+                fromEventRulePlus1.setTime(3*24*60*60*1000 + fromEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+                toEventRulePlus1.setTime(3*24*60*60*1000 + toEventRule.getTime() - new Date().getTimezoneOffset()*60*1000 + timeZoneShift);
+                if ((posTime.getTime() >= fromEventRule0.getTime() && posTime.getTime() <= toEventRule0.getTime())
+                        || (posTime.getTime() >= fromEventRuleMinus1.getTime() && posTime.getTime() <= toEventRuleMinus1.getTime())
+                        || (posTime.getTime() >= fromEventRulePlus1.getTime() && posTime.getTime() <= toEventRulePlus1.getTime())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private int parseDayOfWeek(String dayOfWeek) {
+            if (dayOfWeek.length() == 1) {
+                int d = Integer.parseInt(dayOfWeek);
+                return d == 0 ? 7 : d;
+            }
+
+            if (dayOfWeek.equalsIgnoreCase("Mon")) {
+                return 1;
+            } else if (dayOfWeek.equalsIgnoreCase("Tue")) {
+                return 2;
+            } else if (dayOfWeek.equalsIgnoreCase("Wed")) {
+                return 3;
+            } else if (dayOfWeek.equalsIgnoreCase("Thu")) {
+                return 4;
+            } else if (dayOfWeek.equalsIgnoreCase("Fri")) {
+                return 5;
+            } else if (dayOfWeek.equalsIgnoreCase("Sat")) {
+                return 6;
+            } else if (dayOfWeek.equalsIgnoreCase("Sun")) {
+                return 7;
+            }
+
+            throw new IllegalArgumentException("'" + dayOfWeek + "' day of week has unsupported format");
+        }
+
+        protected boolean isDayOfWeekOk(Position pos, String dayOfWeek, TimeZone timeZone) {
+            if (dayOfWeek == null || dayOfWeek.trim().isEmpty()) {
+                return true;
+            }
+
+            Calendar posTime = Calendar.getInstance(timeZone);
+            posTime.setTime(pos.getTime());
+            int posDayOfWeek = posTime.get(Calendar.DAY_OF_WEEK); // calendar monday is 2, but we expect monday to be 1
+            posDayOfWeek = posDayOfWeek == Calendar.SUNDAY ? 7 : (posDayOfWeek - 1);
+
+            Matcher matcher = EVENT_RULE_DAY_OF_WEEK_FRAME_PATTERN.matcher(dayOfWeek);
+            while (matcher.find()) {
+                String fromDoW = dayOfWeek.substring(matcher.start(1), matcher.end(1));
+                String toDoW = matcher.group(2) == null ? null : dayOfWeek.substring(matcher.start(2), matcher.end(2));
+
+                int from = parseDayOfWeek(fromDoW);
+                if (toDoW == null && from == posDayOfWeek) {
+                    return true;
+                }
+
+                if (toDoW != null && (posDayOfWeek >= from && posDayOfWeek <= parseDayOfWeek(toDoW.substring(1)))) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        protected boolean isCourseOk(Position pos, String course) {
+            if (pos.getCourse() == null || course == null || course.trim().isEmpty()) {
+                return true;
+            }
+            final double eps = 0.001;
+            Double posCourse = pos.getCourse();
+
+            course = course.trim().toUpperCase();
+            Matcher matcher = EVENT_RULE_COURSE_PATTERN.matcher(course);
+            while (matcher.find()) {
+                double fromCourse = Double.parseDouble(course.substring(matcher.start(1), matcher.end(1)));
+                double toCourse = Double.parseDouble(course.substring(matcher.start(2), matcher.end(2)));
+                if ((posCourse > fromCourse || Math.abs(posCourse - fromCourse) <= eps)
+                        && (posCourse < toCourse || Math.abs(posCourse - toCourse) <= eps)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean checkEventRules(User user, DeviceEvent event, Set<EventRule> eventRules) {
+            if (eventRules == null) {
+                return true;
+            }
+
+            boolean hasAppropriateRule = false;
+            for (EventRule eventRule : eventRules) {
+                if (eventRule.getDeviceEventType() == event.getType()) {
+                    hasAppropriateRule = true;
+                }
+                if (eventRule.getDeviceEventType() == event.getType()
+                        && event.getDevice().equals(eventRule.getDevice())
+                        && isTimeFrameOk(event.getPosition(), eventRule.getTimeFrame(), getTimeZone(user))
+                        && isDayOfWeekOk(event.getPosition(), eventRule.getDayOfWeek(), getTimeZone(user))
+                        && isCourseOk(event.getPosition(), eventRule.getCourse())) {
+                    switch (eventRule.getDeviceEventType()) {
+                        case GEO_FENCE_ENTER:
+                        case GEO_FENCE_EXIT:
+                            if (eventRule.getGeoFence() == null
+                                    || (event.getGeoFence() != null && eventRule.getGeoFence() != null && event.getGeoFence().equals(eventRule.getGeoFence()))) {
+                                return true;
+                            }
+                        default:
+                            return true;
+                    }
+                }
+            }
+
+            return !hasAppropriateRule;
+        }
+
+        private void addEvent(Map<User, Set<DeviceEvent>> events, User user, DeviceEvent event, Set<EventRule> eventRules) {
+            // check whether user wants to receive such notification events
             // check whether user account is blocked or expired
             if (user.isBlocked() || user.isExpired()) {
                 return;
             }
             // check whether user has access to the geo-fence
-            if ((event.getType() == DeviceEventType.GEO_FENCE_ENTER || event.getType() == DeviceEventType.GEO_FENCE_EXIT) 
+            if ((event.getType() == DeviceEventType.GEO_FENCE_ENTER || event.getType() == DeviceEventType.GEO_FENCE_EXIT)
                     && !user.hasAccessTo(event.getGeoFence())) {
+                return;
+            }
+            // check user notification settings
+            if (!user.getNotificationEvents().contains(event.getType()) || !checkEventRules(user, event, eventRules)) {
                 return;
             }
 
@@ -273,7 +461,7 @@ public class NotificationServiceImpl extends RemoteServiceServlet implements Not
 
                 return true;
             } catch (MessagingException me) {
-                logger.log(Level.SEVERE, "Unable to send Email message", me);
+                logger.log(Level.SEVERE, "Unable to send Email message (" + me.getClass().getName() + ": " + me.getLocalizedMessage() + ")");
                 return false;
             } finally {
                 if (transport != null) try { transport.close(); } catch (MessagingException ignored) {}
